@@ -1,7 +1,7 @@
 package org.usfirst.frc.team1923.robot.subsystems;
 
 import org.usfirst.frc.team1923.robot.RobotMap;
-import org.usfirst.frc.team1923.robot.commands.RawDriveCommand;
+import org.usfirst.frc.team1923.robot.commands.driveCommands.RawDriveCommand;
 import org.usfirst.frc.team1923.robot.utils.DriveProfile;
 
 import com.ctre.CANTalon;
@@ -10,21 +10,25 @@ import com.ctre.CANTalon.TalonControlMode;
 
 import edu.wpi.first.wpilibj.DoubleSolenoid;
 import edu.wpi.first.wpilibj.DoubleSolenoid.Value;
+import edu.wpi.first.wpilibj.Ultrasonic.Unit;
+import edu.wpi.first.wpilibj.Ultrasonic;
 import edu.wpi.first.wpilibj.command.Subsystem;
+//import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 
 /**
  * Class that houses the motors and shifters
  */
 public class DrivetrainSubsystem extends Subsystem {
 
-	private static final double P_CONSTANT = 0; // TODO: Fill in these values
-	private static final double I_CONSTANT = 0;
-	private static final double D_CONSTANT = 0;
-	private static final double F_CONSTANT = 0;
-	private static final boolean LEFT_REVERSED = false; // Reverse the sensor or
-														// the motor or both?
-	private static final boolean RIGHT_REVERSED = false;
-	private static final int MAX_SAFE_SHIFT_SPEED = 100; // RPM
+	private static final double DEFAULT_ERROR_MARGIN = 100;
+	private final double P_CONSTANT = 0; // TODO: Fill in these values
+	private final double I_CONSTANT = 0;
+	private final double D_CONSTANT = 0;
+	private final double F_CONSTANT = 0;
+	private final boolean LEFT_REVERSED = false; // Reverse the sensor or
+													// the motor or both?
+	private final boolean RIGHT_REVERSED = true;
+	private final int MAX_SAFE_SHIFT_SPEED = 100; // RPM
 
 	// Arrays of talons to group them together
 	// The 0th element will always be the master Talon, the subsequent ones will
@@ -34,11 +38,16 @@ public class DrivetrainSubsystem extends Subsystem {
 	private DoubleSolenoid shifter;
 	private DoubleSolenoid shiftOmnis;
 
+	public Ultrasonic frontSonar;
+
 	public DriveProfile dprofile = new DriveProfile(RobotMap.DRIVER_PROFILE);
 
 	public DrivetrainSubsystem() {
 		leftTalons = new CANTalon[RobotMap.LEFT_DRIVE_PORTS.length];
 		rightTalons = new CANTalon[RobotMap.RIGHT_DRIVE_PORTS.length];
+
+		frontSonar = new Ultrasonic(RobotMap.FRONT_SONAR_PING_PORT, RobotMap.FRONT_SONAR_ECHO_PORT, Unit.kMillimeters);
+		frontSonar.setAutomaticMode(true);
 
 		for (int i = 0; i < RobotMap.LEFT_DRIVE_PORTS.length; i++) {
 			leftTalons[i] = new CANTalon(RobotMap.LEFT_DRIVE_PORTS[i]);
@@ -50,10 +59,13 @@ public class DrivetrainSubsystem extends Subsystem {
 
 		shifter = new DoubleSolenoid(RobotMap.PCM_MODULE_NUM, RobotMap.SHIFT_FORWARD_PORT,
 				RobotMap.SHIFT_BACKWARD_PORT);
-		shiftOmnis = new DoubleSolenoid(RobotMap.PCM_MODULE_NUM, RobotMap.OMNI_FORWARD_PORT, RobotMap.OMNI_BACKWARD_PORT);
+		shiftOmnis = new DoubleSolenoid(RobotMap.PCM_MODULE_NUM, RobotMap.OMNI_FORWARD_PORT,
+				RobotMap.OMNI_BACKWARD_PORT);
+
 		setToFollow();
 		configPID();
 		drive(0, 0, TalonControlMode.PercentVbus);
+
 	}
 	// Put methods for controlling this subsystem
 	// here. Call these from Commands.
@@ -113,12 +125,14 @@ public class DrivetrainSubsystem extends Subsystem {
 		rightTalons[0].setI(I_CONSTANT);
 		rightTalons[0].setD(D_CONSTANT);
 
-		setMasterToMode(TalonControlMode.Speed);
+		setMasterToMode(TalonControlMode.PercentVbus);
 		leftTalons[0].set(0.0);
-		leftTalons[0].reverseOutput(LEFT_REVERSED);
+		// leftTalons[0].reverseOutput(LEFT_REVERSED);
+		leftTalons[0].setInverted(LEFT_REVERSED);
 
 		rightTalons[0].set(0.0);
-		rightTalons[0].reverseOutput(RIGHT_REVERSED);
+		// rightTalons[0].reverseOutput(RIGHT_REVERSED);
+		rightTalons[0].setInverted(RIGHT_REVERSED);
 	}
 
 	/**
@@ -131,7 +145,7 @@ public class DrivetrainSubsystem extends Subsystem {
 	 * @param right
 	 *            Right power
 	 */
-	public void set(double left, double right) {
+	private void set(double left, double right) {
 		leftTalons[0].set(left);
 		rightTalons[0].set(right);
 	}
@@ -154,7 +168,7 @@ public class DrivetrainSubsystem extends Subsystem {
 	 *            TalonControlMode to be used
 	 */
 	public void drive(double left, double right, TalonControlMode m) {
-		if (leftTalons[0].getControlMode() != m) {
+		if (leftTalons[0].getControlMode() != m || rightTalons[0].getControlMode() != m) {
 			setMasterToMode(m);
 		}
 		set(left, right);
@@ -172,32 +186,44 @@ public class DrivetrainSubsystem extends Subsystem {
 	}
 
 	public void initDefaultCommand() {
-		setDefaultCommand(new RawDriveCommand()); // Temp set to raw drive,
-													// could change to speed
-													// later on for more control
+		setDefaultCommand(new RawDriveCommand());
 	}
 
 	public void shiftUp() {
-		shifter.set(Value.kForward);
+		if (shifter.get() != Value.kForward) {
+			shifter.set(Value.kForward);
+		}
 	}
 
 	public void shiftDown() {
-		if (safeToShift()) {
+		if (safeToShift() && shifter.get() != Value.kReverse) {
 			shifter.set(Value.kReverse);
 		}
 	}
-	
-	public void shiftUpOmnis(){
-		this.shiftOmnis.set(Value.kForward);
+
+	public void shiftUpOmnis() {
+		if (shiftOmnis.get() != Value.kForward) {
+			this.shiftOmnis.set(Value.kForward);
+		}
 	}
-	
-	public void shiftDownOmnis(){
-		this.shiftOmnis.set(Value.kReverse);
+
+	public void shiftDownOmnis() {
+		if (shiftOmnis.get() != Value.kReverse) {
+			this.shiftOmnis.set(Value.kReverse);
+		}
 	}
 
 	private boolean safeToShift() {
 		return Math.max(Math.abs(leftTalons[0].getEncVelocity()),
 				Math.abs(rightTalons[0].getEncVelocity())) < MAX_SAFE_SHIFT_SPEED;
+	}
+
+	public void turnTime(double power) {
+		leftTalons[0].changeControlMode(CANTalon.TalonControlMode.PercentVbus);
+		rightTalons[0].changeControlMode(CANTalon.TalonControlMode.PercentVbus);
+
+		leftTalons[0].set(power);
+		rightTalons[0].set(-power);
 	}
 
 	public void stop() {
